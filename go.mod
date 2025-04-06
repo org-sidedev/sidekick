@@ -9,11 +9,12 @@ require (
 	github.com/adrg/strutil v0.3.0
 	github.com/adrg/xdg v0.5.3
 	github.com/cbroglie/mustache v1.4.0
+	github.com/charmbracelet/huh v0.6.0
 	github.com/denormal/go-gitignore v0.0.0-20180930084346-ae8ad1d07817
 	github.com/ehsanul/anthropic-go/v3 v3.0.0-20240726013241-16f67db96235
 	github.com/erikgeiser/promptkit v0.9.0
 	github.com/gin-gonic/gin v1.9.1
-	github.com/go-git/go-git/v5 v5.11.0
+	github.com/go-git/go-git/v5 v5.13.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/invopop/jsonschema v0.12.0
@@ -31,7 +32,7 @@ require (
 	github.com/segmentio/ksuid v1.0.4
 	github.com/smacker/go-tree-sitter v0.0.0-20240423010953-8ba036550382
 	github.com/sourcegraph/jsonrpc2 v0.2.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/temporalio/ui-server/v2 v2.32.0
 	github.com/thomaspoignant/go-feature-flag v1.26.0
 	github.com/unum-cloud/usearch/golang v0.0.0-20231126121226-c2463ca3a043
@@ -46,7 +47,6 @@ require (
 
 require (
 	github.com/catppuccin/go v0.2.0 // indirect
-	github.com/charmbracelet/huh v0.6.0 // indirect
 	github.com/charmbracelet/x/ansi v0.2.3 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.0 // indirect
@@ -84,7 +84,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	cloud.google.com/go/storage v1.41.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/ProtonMail/go-crypto v0.0.0-20230828082145-3c4c8a2d2371 // indirect
+	github.com/ProtonMail/go-crypto v1.1.3 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/apache/thrift v0.16.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -107,7 +107,6 @@ require (
 	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
 	github.com/chenzhuoyu/iasm v0.9.0 // indirect
 	github.com/cloudflare/circl v1.3.7 // indirect
-	github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 // indirect
 	github.com/coreos/go-oidc/v3 v3.11.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.5 // indirect
 	github.com/danieljoos/wincred v1.2.0 // indirect
@@ -200,7 +199,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/sergi/go-diff v1.3.1 // indirect
+	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skeema/knownhosts v1.3.0 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
@@ -239,7 +238,7 @@ require (
 	golang.org/x/arch v0.5.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/net v0.32.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.22.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
