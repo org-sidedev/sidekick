@@ -169,7 +169,7 @@ func TestAnthropicToolChatIntegration(t *testing.T) {
 	mockTool := &Tool{
 		Name:        "get_current_weather",
 		Description: "Get the current weather in a given location",
-		Parameters:  (&jsonschema.Reflector{ExpandedStruct: true}).Reflect(&getCurrentWeather{}),
+		Parameters:  (&jsonschema.Reflector{DoNotReference: true}).Reflect(&getCurrentWeather{}),
 	}
 
 	options := ToolChatOptions{
@@ -179,7 +179,7 @@ func TestAnthropicToolChatIntegration(t *testing.T) {
 				Model:    anthropic.ModelClaude_3_Haiku_20240307, // cheapest model for integration testing
 			},
 			Messages: []ChatMessage{
-				{Role: ChatMessageRoleUser, Content: "First say hi. After thatn, then look up what the weather in New York"},
+				{Role: ChatMessageRoleUser, Content: "First say hi. After that, then look up what the weather is like in New York"},
 			},
 			Tools: []*Tool{mockTool},
 		},
