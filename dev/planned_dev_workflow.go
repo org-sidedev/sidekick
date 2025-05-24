@@ -3,6 +3,7 @@ package dev
 import (
 	"fmt"
 	"os"
+	"sidekick/coding/git"
 	"sidekick/domain"
 	"sidekick/env"
 	"sidekick/utils"
@@ -23,6 +24,7 @@ type PlannedDevOptions struct {
 	ReproduceIssue        bool        `json:"reproduceIssue"`
 	DetermineRequirements bool        `json:"determineRequirements"`
 	EnvType               env.EnvType `json:"envType,omitempty" default:"local"`
+	StartBranch           *string     `json:"startBranch,omitempty"` // Optional branch for git worktree env
 }
 
 var SideAppEnv = os.Getenv("SIDE_APP_ENV")
@@ -51,7 +53,7 @@ func PlannedDevWorkflow(ctx workflow.Context, input PlannedDevInput) (planExec D
 
 	ctx = utils.DefaultRetryCtx(ctx)
 
-	dCtx, err := SetupDevContext(ctx, input.WorkspaceId, input.RepoDir, string(input.EnvType))
+	dCtx, err := SetupDevContext(ctx, input.WorkspaceId, input.RepoDir, string(input.EnvType), input.PlannedDevOptions.StartBranch)
 	if err != nil {
 		_ = signalWorkflowClosure(ctx, "failed")
 		return DevPlanExecution{}, fmt.Errorf("failed to setup dev context: %v", err)
@@ -62,7 +64,7 @@ func PlannedDevWorkflow(ctx workflow.Context, input PlannedDevInput) (planExec D
 	SetupPauseHandler(dCtx, "Paused for user input", nil)
 
 	// TODO move environment creation to an activity within EnsurePrerequisites
-	err = EnsurePrerequisites(dCtx, input.Requirements)
+	err = EnsurePrerequisites(dCtx)
 	if err != nil {
 		_ = signalWorkflowClosure(ctx, "failed")
 		return DevPlanExecution{}, err
@@ -104,6 +106,70 @@ func PlannedDevWorkflow(ctx workflow.Context, input PlannedDevInput) (planExec D
 	if err != nil {
 		_ = signalWorkflowClosure(ctx, "failed")
 		return DevPlanExecution{}, fmt.Errorf("failed to auto-format code: %v", err)
+	}
+
+	// Handle merge if using worktree and workflow version is new enough
+	v := workflow.GetVersion(ctx, "git-worktree-merge", workflow.DefaultVersion, 1)
+	if input.EnvType == env.EnvTypeLocalGitWorktree && v == 1 {
+		defaultTarget := "main"
+		if input.PlannedDevOptions.StartBranch != nil {
+			defaultTarget = *input.PlannedDevOptions.StartBranch
+		}
+
+		// Get diff between branches using three-dot syntax
+		var gitDiff string
+		future := workflow.ExecuteActivity(ctx, git.GitDiffActivity, dCtx.EnvContainer, git.GitDiffParams{
+			ThreeDotDiff: true,
+			BaseBranch:   defaultTarget,
+		})
+		err = future.Get(ctx, &gitDiff)
+		if err != nil {
+			_ = signalWorkflowClosure(ctx, "failed")
+			return DevPlanExecution{}, fmt.Errorf("failed to get branch diff: %v", err)
+		}
+
+		mergeInfo, err := getMergeApproval(dCtx, defaultTarget, gitDiff)
+		if err != nil {
+			_ = signalWorkflowClosure(ctx, "failed")
+			return DevPlanExecution{}, fmt.Errorf("failed to get merge approval: %v", err)
+		}
+
+		if mergeInfo.Approved {
+			// Perform the merge
+			actionCtx := dCtx.NewActionContext("merge")
+			actionCtx.ActionParams = map[string]interface{}{
+				"sourceBranch": dCtx.Worktree.Name,
+				"targetBranch": mergeInfo.TargetBranch,
+			}
+
+			mergeResult, err := Track(actionCtx, func(flowAction domain.FlowAction) (git.MergeActivityResult, error) {
+				var result git.MergeActivityResult
+				err := workflow.ExecuteActivity(ctx, git.GitMergeActivity, dCtx.EnvContainer, git.GitMergeParams{
+					SourceBranch: dCtx.Worktree.Name,
+					TargetBranch: mergeInfo.TargetBranch,
+				}).Get(ctx, &result)
+				if err != nil {
+					return git.MergeActivityResult{}, fmt.Errorf("failed to merge: %v", err)
+				}
+				return result, nil
+			})
+			if err != nil {
+				_ = signalWorkflowClosure(ctx, "failed")
+				return DevPlanExecution{}, err
+			}
+
+			if mergeResult.HasConflicts {
+				// Present continue request with Done tag
+				actionCtx := dCtx.NewActionContext("user_request.continue")
+				err := GetUserContinue(actionCtx, "Merge conflicts detected. Please resolve conflicts and continue when done.", map[string]any{
+					"continueTag": "done",
+				})
+				if err != nil {
+					_ = signalWorkflowClosure(ctx, "failed")
+					return DevPlanExecution{}, fmt.Errorf("failed to get continue approval: %v", err)
+				}
+			}
+		}
 	}
 
 	// emit signal when workflow ends successfully
