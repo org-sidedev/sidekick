@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func NewTestSqliteStorage(t *testing.T, dbName string) *Storage {
+func NewTestStorage(t *testing.T, dbName string) *Storage {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	kvDb, err := sql.Open("sqlite", ":memory:")
