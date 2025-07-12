@@ -2,6 +2,7 @@ package persisted_ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sidekick/coding/tree_sitter"
@@ -18,7 +19,7 @@ import (
 )
 
 type RagActivities struct {
-	DatabaseAccessor srv.Service
+	DatabaseAccessor srv.Storage
 }
 
 type RankedDirSignatureOutlineOptions struct {
@@ -47,7 +48,13 @@ func (options RankedDirSignatureOutlineOptions) ActionParams() map[string]any {
 func (ra *RagActivities) RankedDirSignatureOutline(options RankedDirSignatureOutlineOptions) (string, error) {
 	// FIXME put tree sitter activities inside rag activities struct
 	t := tree_sitter.TreeSitterActivities{DatabaseAccessor: ra.DatabaseAccessor}
-	fileSignatureSubkeys, err := t.CreateDirSignatureOutlines(options.WorkspaceId, options.EnvContainer.Env.GetWorkingDirectory())
+
+	_, maxCharacterLimit, err := embedding.CalculateEmbeddingCharLimits(options.RankedViaEmbeddingOptions.ModelConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to calculate embedding char limits: %w", err)
+	}
+
+	fileSignatureSubkeys, err := t.CreateDirSignatureOutlines(options.WorkspaceId, options.EnvContainer.Env.GetWorkingDirectory(), maxCharacterLimit)
 	if err != nil {
 		return "", err
 	}
@@ -82,6 +89,12 @@ type RankedSubkeysOptions struct {
 }
 
 func (ra *RagActivities) RankedSubkeys(options RankedSubkeysOptions) ([]string, error) {
+	// Empty queries are invalid as they provide no semantic information for ranking.
+	// This is a clear misuse since ranking requires meaningful text to compare against.
+	if options.RankQuery == "" {
+		return []string{}, errors.New("Attempted to perform RAG with empty rank query")
+	}
+
 	ea := EmbedActivities{Storage: ra.DatabaseAccessor}
 	err := ea.CachedEmbedActivity(context.Background(), CachedEmbedActivityOptions{
 		Secrets:     options.Secrets,
@@ -100,25 +113,137 @@ func (ra *RagActivities) RankedSubkeys(options RankedSubkeysOptions) ([]string, 
 	if err != nil {
 		return []string{}, err
 	}
-	// TODO /gen/basic cache the queryVector in memory
-	// NOTE: "code_retrieval_query" would be ideal here, but isn't supported by text-embedding-004
-	// TODO: dynamically decide task type based on model name
-	// TODO: change "task type" to instead be "use_case" and we'll map to task
-	// type internally in the embedder implementation
-	queryVector, err := embedder.Embed(context.Background(), options.ModelConfig, options.Secrets.SecretManager, []string{options.RankQuery}, embedding.TaskTypeRetrievalQuery)
+
+	// Get model-specific character limits
+	goodQueryChars, maxQueryChars, err := embedding.CalculateEmbeddingCharLimits(options.ModelConfig)
 	if err != nil {
-		return []string{}, fmt.Errorf("failed to embed query: %w", err)
+		return []string{}, fmt.Errorf("failed to calculate embedding limits: %w", err)
 	}
 
-	return va.VectorSearch(VectorSearchActivityOptions{
+	// Split query into chunks if it exceeds max size, otherwise it's a single chunk.
+	var queryChunks []string
+	if len(options.RankQuery) > maxQueryChars {
+		queryChunks = splitQueryIntoChunks(options.RankQuery, goodQueryChars, maxQueryChars)
+	} else {
+		queryChunks = []string{options.RankQuery}
+	}
+
+	// TODO: dynamically decide task type based on model name, as all task types arent supported by all models.
+	// TODO: change "task type" to instead be "use_case" and we'll map to task
+	// type internally in the embedder implementation
+	taskType := embedding.TaskTypeRetrievalQuery
+
+	// Embed all chunks
+	queryVectors, err := embedder.Embed(context.Background(), options.ModelConfig, options.Secrets.SecretManager, queryChunks, taskType)
+	if err != nil {
+		return []string{}, fmt.Errorf("failed to embed query chunks: %w", err)
+	}
+	if len(queryVectors) == 0 {
+		return []string{}, nil
+	}
+
+	// Search with all vectors using MultiVectorSearch
+	results, err := va.MultiVectorSearch(MultiVectorSearchOptions{
 		WorkspaceId: options.WorkspaceId,
 		Provider:    options.ModelConfig.Provider,
 		Model:       options.ModelConfig.Model,
 		ContentType: options.ContentType,
 		Subkeys:     options.Subkeys,
-		Query:       queryVector[0],
+		Queries:     queryVectors,
 		Limit:       1000,
 	})
+	if err != nil {
+		return []string{}, fmt.Errorf("failed multi-vector search: %w", err)
+	}
+
+	if len(queryChunks) > 1 {
+		// Combine results using RRF
+		return FuseResultsRRF(results), nil
+	}
+
+	// For a single chunk, return the first result set
+	if len(results) > 0 {
+		return results[0], nil
+	}
+
+	return []string{}, nil
+}
+
+// splitQueryIntoChunks splits a query into chunks based on sentence boundaries and size limits.
+// Unlike tree_sitter.splitOutlineIntoChunks which is specialized for code outlines,
+// this function is optimized for natural language queries.
+func splitQueryIntoChunks(query string, goodChunkSize int, maxChunkSize int) []string {
+	if query == "" {
+		return []string{}
+	}
+
+	// First try splitting on sentence boundaries
+	sentences := strings.FieldsFunc(query, func(r rune) bool {
+		return r == '.' || r == '?' || r == '!'
+	})
+
+	var chunks []string
+	currentChunk := ""
+
+	// Combine sentences into chunks
+	for _, sentence := range sentences {
+		sentence = strings.TrimSpace(sentence)
+		if sentence == "" {
+			continue
+		}
+
+		// Add sentence punctuation back
+		sentence = sentence + "."
+
+		// If adding this sentence would exceed goodChunkSize, start a new chunk
+		if len(currentChunk)+len(sentence)+1 > goodChunkSize && currentChunk != "" {
+			chunks = append(chunks, strings.TrimSpace(currentChunk))
+			currentChunk = sentence
+		} else {
+			if currentChunk != "" {
+				currentChunk += " "
+			}
+			currentChunk += sentence
+		}
+	}
+
+	// Add the last chunk if any
+	if currentChunk != "" {
+		chunks = append(chunks, strings.TrimSpace(currentChunk))
+	}
+
+	// If any chunks are still too large, split them on word boundaries
+	for i := 0; i < len(chunks); i++ {
+		if len(chunks[i]) > maxChunkSize {
+			words := strings.Fields(chunks[i])
+			currentChunk = ""
+			newChunks := []string{}
+
+			for _, word := range words {
+				if len(currentChunk)+len(word)+1 > maxChunkSize {
+					if currentChunk != "" {
+						newChunks = append(newChunks, strings.TrimSpace(currentChunk))
+					}
+					currentChunk = word
+				} else {
+					if currentChunk != "" {
+						currentChunk += " "
+					}
+					currentChunk += word
+				}
+			}
+
+			if currentChunk != "" {
+				newChunks = append(newChunks, strings.TrimSpace(currentChunk))
+			}
+
+			// Replace the original chunk with the new chunks
+			chunks = append(chunks[:i], append(newChunks, chunks[i+1:]...)...)
+			i += len(newChunks) - 1
+		}
+	}
+
+	return chunks
 }
 
 func getEmbedder(config common.ModelConfig) (embedding.Embedder, error) {
